@@ -32,6 +32,12 @@ impl Ed25519PublicKey {
     }
 }
 
+/// size (in bytes) of an Ed25519 public key
+pub const ED25519_PUBLIC_KEY_SIZE: usize = 32;
+
+/// size (in bytes) of an Ed25519 signature
+pub const ED25519_SIGNATURE_SIZE: usize = 64;
+
 /// Generate a new [`Ed25519SecretKey`] from the given [`Rng`]
 ///
 /// Don't forget to release the resource with [`ed25519_delete_secret`]
@@ -100,7 +106,7 @@ pub extern "C" fn ed25519_to_public_key(key: &Ed25519SecretKey) -> Ed25519Public
 ///
 #[no_mangle]
 pub unsafe extern "C" fn ed25519_public_key_to_bytes(key: &Ed25519PublicKey, out: NonNull<u8>) {
-    let out = std::slice::from_raw_parts_mut(out.as_ptr(), ed25519::PublicKey::SIZE);
+    let out = std::slice::from_raw_parts_mut(out.as_ptr(), ED25519_PUBLIC_KEY_SIZE);
 
     out.copy_from_slice(key.0.as_ref());
 }
@@ -161,7 +167,7 @@ pub unsafe extern "C" fn ed25519_signature_to_bytes(
     signature: &Ed25519Signature,
     out: NonNull<u8>,
 ) {
-    let out = std::slice::from_raw_parts_mut(out.as_ptr(), ed25519::Signature::SIZE);
+    let out = std::slice::from_raw_parts_mut(out.as_ptr(), ED25519_SIGNATURE_SIZE);
 
     out.copy_from_slice(signature.0.as_ref());
 }
@@ -310,7 +316,7 @@ mod tests {
     fn derive_from_key() {
         let mut key = "012345678901234567890123456789++".to_owned().into_bytes();
         let mut pwd = "password".to_string().into_bytes();
-        let mut pk = [0; 32];
+        let mut pk = [0; ED25519_PUBLIC_KEY_SIZE];
 
         let seed_ptr = unsafe {
             ed25519_derive_from_key(
@@ -340,7 +346,7 @@ mod tests {
 
     #[test]
     fn public_key() {
-        let mut public = vec![0; 32];
+        let mut public = vec![0; ED25519_PUBLIC_KEY_SIZE];
 
         let mut rng = Rng::new([]);
 
@@ -357,6 +363,6 @@ mod tests {
         unsafe { ed25519_delete_secret(key_ptr) }
         unsafe { ed25519_delete_public(pub_key) }
 
-        assert_ne!(public, vec![0; 32]);
+        assert_ne!(public, vec![0; ED25519_PUBLIC_KEY_SIZE]);
     }
 }

@@ -57,28 +57,8 @@ private_default_tagged_enum_constructor = false
 
 [const]
 allow_static_const = true
-allow_constexpr = false
-
-[macro_expansion]
-bitflags = false
-
-############## Options for How The Rust library Should Be Parsed ###############
-
-[parse]
-parse_deps = false
-include = []
-exclude = []
-clean = false
-extra_bindings = []
-
-[parse.expand]
-crates = []
-all_features = false
-default_features = true
-features = []
-
-[ptr]
-# non_null_attribute = "_NonNullPtr"
+allow_constexpr = true
+sort_by = "Name"
 
 [defines]
 "target_os = ios" = "TARGET_OS_IOS"

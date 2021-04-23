@@ -65,16 +65,9 @@ pub unsafe extern "C" fn ed25519_extended_derive_from_key(
     NonNull::new_unchecked(ptr)
 }
 
-/// fill the given `public_key_ptr` with the 32 bytes of the public key
-/// associated to the given `key`.
-///
-/// # Safety
-///
-/// `key` must be valid to read from and `public_key_ptr` must be valid to
-/// write 32 bytes to.
-///
+/// Get the Public key associated to the given secret key
 #[no_mangle]
-pub unsafe extern "C" fn ed25519_extended_to_public_key(
+pub extern "C" fn ed25519_extended_to_public_key(
     key: &Ed25519ExtendedSecretKey,
 ) -> Ed25519PublicKeyPtr {
     Ed25519PublicKey::new(key.0.public_key())

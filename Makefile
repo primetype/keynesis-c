@@ -81,9 +81,9 @@ ndk-home:
 	fi
 
 ## bindings: Generate the .h file for iOS in the workspace's target
-bindings: ${TARGET}/bindings.h
+bindings: keynesis.h
 
-${TARGET}/bindings.h: $(SOURCES)
+keynesis.h: $(SOURCES)
 	cbindgen src/lib.rs -c cbindgen.toml | uniq > $@
 
 ## clean:

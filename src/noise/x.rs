@@ -10,6 +10,8 @@ pub struct NoiseX {
     state: X<SecretKey, Blake2b, Rng>,
 }
 
+pub const NOISE_X_METADATA_SIZE: usize = 32 + 32 + 16 + 16;
+
 pub type NoiseXPtr = NonNull<NoiseX>;
 
 /// create a [`NoiseX`] object that can be used on send a message to a sender
@@ -51,7 +53,7 @@ pub unsafe extern "C" fn noise_x(
 /// in or you may see unexpected behaviors
 ///
 /// * memory `message` to `message + message_size` needs to be valid to read
-/// * memory `output` to `output + message_size + 16` needs to be valid to write
+/// * memory `output` to `output + message_size + NOISE_X_METADATA_SIZE` needs to be valid to write
 ///
 #[no_mangle]
 pub unsafe extern "C" fn noise_x_send(
@@ -63,7 +65,8 @@ pub unsafe extern "C" fn noise_x_send(
     output: NonNull<u8>,
 ) -> NoiseErrorPtr {
     let message = std::slice::from_raw_parts(message.as_ref(), message_size);
-    let output = std::slice::from_raw_parts_mut(output.as_ptr(), message_size + 16);
+    let output =
+        std::slice::from_raw_parts_mut(output.as_ptr(), message_size + NOISE_X_METADATA_SIZE);
 
     let x = std::ptr::read(x_ptr.as_ptr());
     let result = x.state.send(&sender.0, &recipient.0, message, output);
@@ -86,7 +89,7 @@ pub unsafe extern "C" fn noise_x_send(
 /// in or you may see unexpected behaviors
 ///
 /// * memory `message` to `message + message_size` needs to be valid to read
-/// * memory `output` to `output + message_size - 16` needs to be valid to write
+/// * memory `output` to `output + message_size - NOISE_X_METADATA_SIZE` needs to be valid to write
 /// * sender is a pointer that will be allocated and filled with the public key
 ///   of the sender.
 ///
@@ -100,7 +103,8 @@ pub unsafe extern "C" fn noise_x_receive(
     sender: &mut Ed25519PublicKeyPtr,
 ) -> NoiseErrorPtr {
     let message = std::slice::from_raw_parts(message.as_ref(), message_size);
-    let output = std::slice::from_raw_parts_mut(output.as_ptr(), message_size - 16);
+    let output =
+        std::slice::from_raw_parts_mut(output.as_ptr(), message_size - NOISE_X_METADATA_SIZE);
 
     let x = std::ptr::read(x_ptr.as_ptr());
     let result = x.state.receive(&recipient.0, message);
@@ -134,4 +138,72 @@ pub unsafe extern "C" fn noise_x_receive(
 #[no_mangle]
 pub unsafe extern "C" fn noise_x_cancel(mut x_ptr: NoiseXPtr) {
     let _ = Box::from_raw(x_ptr.as_mut());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::ed25519::{
+        ed25519_delete_public, ed25519_delete_secret, ed25519_generate, ed25519_to_public_key,
+    };
+    use std::ptr::null_mut;
+
+    #[test]
+    fn cancel_n() {
+        let mut rng = Rng::new(&[]);
+
+        let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
+
+        unsafe { noise_x_cancel(x) }
+    }
+
+    #[test]
+    fn send_receive() {
+        let mut rng = Rng::new(&[]);
+        let mut message = b"message".to_vec();
+        let mut encrypted = vec![0; message.len() + NOISE_X_METADATA_SIZE];
+        let mut decrypted = vec![0; message.len()];
+
+        let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
+        let sender = unsafe { ed25519_generate(&mut rng) };
+        let mut sender_pk = unsafe { NonNull::new_unchecked(null_mut()) };
+        let receiver = unsafe { ed25519_generate(&mut rng) };
+        let receiver_pk = unsafe { ed25519_to_public_key(receiver.as_ref()) };
+
+        let error = unsafe {
+            noise_x_send(
+                x,
+                sender.as_ref(),
+                receiver_pk.as_ref(),
+                NonNull::new_unchecked(message.as_mut_ptr()),
+                message.len(),
+                NonNull::new_unchecked(encrypted.as_mut_ptr()),
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            dbg!(error);
+        }
+
+        let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
+        let error = unsafe {
+            noise_x_receive(
+                x,
+                receiver.as_ref(),
+                NonNull::new_unchecked(encrypted.as_mut_ptr()),
+                encrypted.len(),
+                NonNull::new_unchecked(decrypted.as_mut_ptr()),
+                &mut sender_pk,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            dbg!(error);
+        }
+
+        unsafe { ed25519_delete_secret(sender) };
+        unsafe { ed25519_delete_public(sender_pk) };
+        unsafe { ed25519_delete_secret(receiver) };
+        unsafe { ed25519_delete_public(receiver_pk) };
+
+        assert_eq!(message, decrypted);
+    }
 }

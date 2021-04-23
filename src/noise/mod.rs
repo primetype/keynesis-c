@@ -1,18 +1,20 @@
 use keynesis::noise::{CipherStateError, HandshakeStateError};
 
-mod ik;
-mod n;
-mod transport_state;
-mod x;
+pub mod ik;
+pub mod n;
+pub mod transport_state;
+pub mod x;
 
 /// the kind of error that may appear when performing a Noise handshake
+#[derive(Debug)]
 pub struct NoiseError {
-    _error: HandshakeStateError,
+    error: HandshakeStateError,
 }
 
 /// the kind of error that may appear when performing a Noise handshake
+#[derive(Debug)]
 pub struct NoiseCipherError {
-    _error: CipherStateError,
+    error: CipherStateError,
 }
 
 /// convenient type alias for pointer to NoiseErrorPtr
@@ -31,13 +33,13 @@ pub type NoiseCipherErrorPtr = *mut NoiseCipherError;
 
 impl NoiseError {
     pub(crate) fn new(error: HandshakeStateError) -> Box<Self> {
-        Box::new(Self { _error: error })
+        Box::new(Self { error })
     }
 }
 
 impl NoiseCipherError {
     pub(crate) fn new(error: CipherStateError) -> Box<Self> {
-        Box::new(Self { _error: error })
+        Box::new(Self { error })
     }
 }
 

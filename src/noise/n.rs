@@ -12,6 +12,11 @@ pub struct NoiseN {
 
 pub type NoiseNPtr = NonNull<NoiseN>;
 
+/// the extra length needed in the output when encrypting a message
+///
+/// i.e. to add as missing bytes of the message: `message.length + NOISE_N_METADATA_SIZE`
+pub const NOISE_N_METADATA_SIZE: usize = 48;
+
 /// create a [`NoiseN`] object that can be used on send a message to a sender
 ///
 /// * if `psk0` is not null, it needs to be 32 bytes long
@@ -71,7 +76,8 @@ pub unsafe extern "C" fn noise_n_send(
     output: NonNull<u8>,
 ) -> NoiseErrorPtr {
     let message = std::slice::from_raw_parts(message.as_ref(), message_size);
-    let output = std::slice::from_raw_parts_mut(output.as_ptr(), message_size + 16);
+    let output =
+        std::slice::from_raw_parts_mut(output.as_ptr(), message_size + NOISE_N_METADATA_SIZE);
 
     let n = std::ptr::read(n_ptr.as_ptr());
     let result = n.state.send(&recipient.0, message, output);
@@ -105,7 +111,8 @@ pub unsafe extern "C" fn noise_n_receive(
     output: NonNull<u8>,
 ) -> NoiseErrorPtr {
     let message = std::slice::from_raw_parts(message.as_ref(), message_size);
-    let output = std::slice::from_raw_parts_mut(output.as_ptr(), message_size - 16);
+    let output =
+        std::slice::from_raw_parts_mut(output.as_ptr(), message_size - NOISE_N_METADATA_SIZE);
 
     let n = std::ptr::read(n_ptr.as_ptr());
     let result = n.state.receive(&recipient.0, message);
@@ -136,4 +143,66 @@ pub unsafe extern "C" fn noise_n_receive(
 #[no_mangle]
 pub unsafe extern "C" fn noise_n_cancel(mut n_ptr: NoiseNPtr) {
     let _ = Box::from_raw(n_ptr.as_mut());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::ed25519::{
+        ed25519_delete_public, ed25519_delete_secret, ed25519_generate, ed25519_to_public_key,
+    };
+    use std::ptr::null_mut;
+
+    #[test]
+    fn cancel_n() {
+        let mut rng = Rng::new(&[]);
+
+        let n = unsafe { noise_n(&mut rng, null_mut(), null_mut(), 0) };
+
+        unsafe { noise_n_cancel(n) }
+    }
+
+    #[test]
+    fn send_receive() {
+        let mut rng = Rng::new(&[]);
+        let mut message = b"message".to_vec();
+        let mut encrypted = vec![0; message.len() + NOISE_N_METADATA_SIZE];
+        let mut decrypted = vec![0; message.len()];
+
+        let n = unsafe { noise_n(&mut rng, null_mut(), null_mut(), 0) };
+        let receiver = unsafe { ed25519_generate(&mut rng) };
+        let receiver_pk = unsafe { ed25519_to_public_key(receiver.as_ref()) };
+
+        let error = unsafe {
+            noise_n_send(
+                n,
+                receiver_pk.as_ref(),
+                NonNull::new_unchecked(message.as_mut_ptr()),
+                message.len(),
+                NonNull::new_unchecked(encrypted.as_mut_ptr()),
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            dbg!(error);
+        }
+
+        let n = unsafe { noise_n(&mut rng, null_mut(), null_mut(), 0) };
+        let error = unsafe {
+            noise_n_receive(
+                n,
+                receiver.as_ref(),
+                NonNull::new_unchecked(encrypted.as_mut_ptr()),
+                encrypted.len(),
+                NonNull::new_unchecked(decrypted.as_mut_ptr()),
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            dbg!(error);
+        }
+
+        unsafe { ed25519_delete_secret(receiver) };
+        unsafe { ed25519_delete_public(receiver_pk) };
+
+        assert_eq!(message, decrypted);
+    }
 }

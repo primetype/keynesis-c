@@ -36,6 +36,9 @@ pub struct Ed25519HdPublicKey {
     pub chain_code: Ed25519HdChainCodePtr,
 }
 
+/// size (in bytes) of an Ed25519 HD chain code
+pub const ED25519_HD_CHAIN_CODE_SIZE: usize = 32;
+
 /// Generate a new [`Ed25519HdSecretKey`] from the given [`Rng`]
 ///
 /// Don't forget to release the resource with [`ed25519_hd_delete_secret`]
@@ -148,29 +151,23 @@ pub unsafe extern "C" fn ed25519_hd_derive_public(
     }
 }
 
-/// fill the given `public_key_ptr` with the 32 bytes of the public key
-/// associated to the given `key`.
-///
-/// # Safety
-///
-/// `key` must be valid to read from and `public_key_ptr` must be valid to
-/// write 32 bytes to.
+/// Get the public key associated to this secret key
 ///
 #[no_mangle]
-pub unsafe extern "C" fn ed25519_hd_to_public_key(key: &Ed25519HdSecretKey) -> Ed25519HdPublicKey {
+pub extern "C" fn ed25519_hd_to_public_key(key: &Ed25519HdSecretKey) -> Ed25519HdPublicKey {
     let pk = key.0.public_key();
 
     let chain_code = {
         let chain_code = *pk.chain_code();
 
         let ptr = Box::into_raw(Box::new(Ed25519HdChainCode(chain_code)));
-        NonNull::new_unchecked(ptr)
+        unsafe { NonNull::new_unchecked(ptr) }
     };
     let public_key = {
         let public_key = *pk.key();
 
         let ptr = Box::into_raw(Box::new(Ed25519PublicKey(public_key)));
-        NonNull::new_unchecked(ptr)
+        unsafe { NonNull::new_unchecked(ptr) }
     };
 
     Ed25519HdPublicKey {
