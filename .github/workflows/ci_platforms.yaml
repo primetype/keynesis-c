@@ -66,7 +66,7 @@ jobs:
 
       - name: Test library (release)
         uses: actions-rs/cargo@v1
-        if: ${{ $matrix.config.test }}
+        if: ${{ matrix.config.test }}
         with:
           use-cross: ${{ matrix.config.cross }}
           command: test
