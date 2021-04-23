@@ -8,7 +8,7 @@ name: C.I. Platforms
 
 jobs:
   release_assets:
-    name: Check ${{ matrix.config.os }}
+    name: Check ${{ matrix.config.target }}
     runs-on: ${{ matrix.config.os }}
     strategy:
       fail-fast: false
