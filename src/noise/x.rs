@@ -1,5 +1,5 @@
 use crate::{
-    keys::ed25519::{Ed25519PublicKey, Ed25519PublicKeyPtr, Ed25519SecretKey},
+    keys::ed25519::{Ed25519PublicKey, Ed25519SecretKey},
     noise::{NoiseError, NoiseErrorPtr},
     rng::Rng,
 };
@@ -100,7 +100,7 @@ pub unsafe extern "C" fn noise_x_receive(
     message: NonNull<u8>,
     message_size: usize,
     output: NonNull<u8>,
-    sender: &mut Ed25519PublicKeyPtr,
+    sender: &mut *mut Ed25519PublicKey,
 ) -> NoiseErrorPtr {
     let message = std::slice::from_raw_parts(message.as_ref(), message_size);
     let output =
@@ -117,7 +117,7 @@ pub unsafe extern "C" fn noise_x_receive(
             output.copy_from_slice(decoded.as_ref());
             keynesis::memsec::memset(decoded.as_mut_ptr(), 0x8F, decoded.len());
 
-            *sender = NonNull::new_unchecked(Box::into_raw(Box::new(Ed25519PublicKey(pk))));
+            *sender = Box::into_raw(Box::new(Ed25519PublicKey(pk)));
 
             std::ptr::null_mut()
         }
@@ -149,7 +149,7 @@ mod tests {
     use std::ptr::null_mut;
 
     #[test]
-    fn cancel_n() {
+    fn cancel_x() {
         let mut rng = Rng::new(&[]);
 
         let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
@@ -166,7 +166,7 @@ mod tests {
 
         let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
         let sender = unsafe { ed25519_generate(&mut rng) };
-        let mut sender_pk = unsafe { NonNull::new_unchecked(null_mut()) };
+        let mut sender_pk = std::ptr::null_mut();
         let receiver = unsafe { ed25519_generate(&mut rng) };
         let receiver_pk = unsafe { ed25519_to_public_key(receiver.as_ref()) };
 
@@ -181,7 +181,7 @@ mod tests {
             )
         };
         if let Some(error) = unsafe { error.as_ref() } {
-            dbg!(error);
+            println!("{}:{}: {:#?}", std::file!(), std::line!(), error);
         }
 
         let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
@@ -196,11 +196,11 @@ mod tests {
             )
         };
         if let Some(error) = unsafe { error.as_ref() } {
-            dbg!(error);
+            println!("{}:{}: {:#?}", std::file!(), std::line!(), error);
         }
 
         unsafe { ed25519_delete_secret(sender) };
-        unsafe { ed25519_delete_public(sender_pk) };
+        unsafe { ed25519_delete_public(NonNull::new_unchecked(sender_pk)) };
         unsafe { ed25519_delete_secret(receiver) };
         unsafe { ed25519_delete_public(receiver_pk) };
 
