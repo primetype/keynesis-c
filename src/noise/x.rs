@@ -10,6 +10,8 @@ pub struct NoiseX {
     state: X<SecretKey, Blake2b, Rng>,
 }
 
+/// extra metadata (in bytes) embedded in the [`noise_x_send`] message
+///
 pub const NOISE_X_METADATA_SIZE: usize = 32 + 32 + 16 + 16;
 
 pub type NoiseXPtr = NonNull<NoiseX>;
@@ -181,7 +183,7 @@ mod tests {
             )
         };
         if let Some(error) = unsafe { error.as_ref() } {
-            println!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
         }
 
         let x = unsafe { noise_x(&mut rng, null_mut(), 0) };
@@ -196,7 +198,7 @@ mod tests {
             )
         };
         if let Some(error) = unsafe { error.as_ref() } {
-            println!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
         }
 
         unsafe { ed25519_delete_secret(sender) };

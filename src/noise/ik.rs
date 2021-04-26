@@ -8,7 +8,7 @@ use keynesis::{
     key::ed25519::SecretKey,
     noise::{ik, IK},
 };
-use std::ptr::NonNull;
+use std::{mem::MaybeUninit, ptr::NonNull};
 
 pub struct NoiseIk {
     state: IK<SecretKey, Blake2b, Rng, ik::A>,
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn noise_ik_initiator_initiate(
     initiator: &Ed25519SecretKey,
     responder: &Ed25519PublicKey,
     output: NonNull<u8>,
-    ik_ptr_next: &mut NoiseIkInitiatorWaitPtr,
+    ik_ptr_next: &mut *mut NoiseIkInitiatorWait,
 ) -> NoiseErrorPtr {
     let output = std::slice::from_raw_parts_mut(output.as_ptr(), 96);
 
@@ -84,9 +84,7 @@ pub unsafe extern "C" fn noise_ik_initiator_initiate(
     match result {
         Err(error) => Box::into_raw(NoiseError::new(error)),
         Ok(next) => {
-            *ik_ptr_next = NonNull::new_unchecked(Box::into_raw(Box::new(NoiseIkInitiatorWait {
-                state: next,
-            })));
+            *ik_ptr_next = Box::into_raw(Box::new(NoiseIkInitiatorWait { state: next }));
             std::ptr::null_mut()
         }
     }
@@ -108,7 +106,7 @@ pub unsafe extern "C" fn noise_ik_responder_receive(
     mut ik_ptr: NoiseIkPtr,
     responder: &Ed25519SecretKey,
     input: NonNull<u8>,
-    ik_ptr_next: &mut NoiseIkResponderRespondPtr,
+    ik_ptr_next: &mut *mut NoiseIkResponderRespond,
 ) -> NoiseErrorPtr {
     let input = std::slice::from_raw_parts(input.as_ptr(), 96);
 
@@ -120,10 +118,7 @@ pub unsafe extern "C" fn noise_ik_responder_receive(
     match result {
         Err(error) => Box::into_raw(NoiseError::new(error)),
         Ok(next) => {
-            *ik_ptr_next =
-                NonNull::new_unchecked(Box::into_raw(Box::new(NoiseIkResponderRespond {
-                    state: next,
-                })));
+            *ik_ptr_next = Box::into_raw(Box::new(NoiseIkResponderRespond { state: next }));
             std::ptr::null_mut()
         }
     }
@@ -152,7 +147,7 @@ pub extern "C" fn noise_ik_responder_get_initiator_public_key(
 pub unsafe extern "C" fn noise_ik_responder_respond(
     ik_ptr: NoiseIkResponderRespondPtr,
     output: NonNull<u8>,
-    transport_state: &mut NoiseTransportState,
+    transport_state: &mut MaybeUninit<NoiseTransportState>,
 ) -> NoiseErrorPtr {
     let output = std::slice::from_raw_parts_mut(output.as_ptr(), 48);
 
@@ -164,7 +159,7 @@ pub unsafe extern "C" fn noise_ik_responder_respond(
     match result {
         Err(error) => Box::into_raw(NoiseError::new(error)),
         Ok(next) => {
-            *transport_state = NoiseTransportState::new(next);
+            *transport_state = MaybeUninit::new(NoiseTransportState::new(next));
             std::ptr::null_mut()
         }
     }
@@ -184,7 +179,7 @@ pub unsafe extern "C" fn noise_ik_initiator_receive(
     ik_ptr: NoiseIkInitiatorWaitPtr,
     initiator: &Ed25519SecretKey,
     input: NonNull<u8>,
-    transport_state: &mut NoiseTransportState,
+    transport_state: &mut MaybeUninit<NoiseTransportState>,
 ) -> NoiseErrorPtr {
     let input = std::slice::from_raw_parts(input.as_ptr(), 48);
 
@@ -196,7 +191,7 @@ pub unsafe extern "C" fn noise_ik_initiator_receive(
     match result {
         Err(error) => Box::into_raw(NoiseError::new(error)),
         Ok(next) => {
-            *transport_state = NoiseTransportState::new(next);
+            *transport_state = MaybeUninit::new(NoiseTransportState::new(next));
             std::ptr::null_mut()
         }
     }
@@ -248,4 +243,254 @@ pub unsafe extern "C" fn noise_ik_responder_cancel(ik_ptr: NoiseIkResponderRespo
 #[no_mangle]
 pub unsafe extern "C" fn noise_ik_initiator_cancel(ik_ptr: NoiseIkInitiatorWaitPtr) {
     let _ = Box::from_raw(ik_ptr.as_ptr());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        keys::ed25519::{
+            ed25519_delete_public, ed25519_delete_secret, ed25519_generate, ed25519_to_public_key,
+        },
+        noise::transport_state::{
+            noise_transport_state_delete, noise_transport_state_session, NOISE_SESSION_SIZE,
+        },
+    };
+    use std::{mem::MaybeUninit, ptr::null_mut};
+
+    #[test]
+    fn cancel_ik() {
+        let mut rng = Rng::new(&[]);
+
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+
+        unsafe { noise_ik_cancel(ik) }
+    }
+
+    #[test]
+    fn cancel_ik_initiator() {
+        let mut rng = Rng::new(&[]);
+        let mut output = vec![0; 129];
+
+        let initiator = unsafe { ed25519_generate(&mut rng) };
+        let responder_sk = unsafe { ed25519_generate(&mut rng) };
+        let responder_pk = unsafe { ed25519_to_public_key(responder_sk.as_ref()) };
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_next = null_mut();
+        let error = unsafe {
+            noise_ik_initiator_initiate(
+                ik,
+                initiator.as_ref(),
+                responder_pk.as_ref(),
+                NonNull::new_unchecked(output.as_mut_ptr()),
+                &mut ik_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+
+        unsafe { ed25519_delete_secret(initiator) };
+        unsafe { ed25519_delete_secret(responder_sk) };
+        unsafe { ed25519_delete_public(responder_pk) };
+
+        unsafe { noise_ik_initiator_cancel(NonNull::new_unchecked(ik_next)) };
+    }
+
+    #[test]
+    fn cancel_ik_responder() {
+        let mut rng = Rng::new(&[]);
+        let mut output = vec![0; 129];
+
+        let initiator = unsafe { ed25519_generate(&mut rng) };
+        let responder_sk = unsafe { ed25519_generate(&mut rng) };
+        let responder_pk = unsafe { ed25519_to_public_key(responder_sk.as_ref()) };
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_next = null_mut();
+        let error = unsafe {
+            noise_ik_initiator_initiate(
+                ik,
+                initiator.as_ref(),
+                responder_pk.as_ref(),
+                NonNull::new_unchecked(output.as_mut_ptr()),
+                &mut ik_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+        unsafe { noise_ik_initiator_cancel(NonNull::new_unchecked(ik_next)) };
+
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_next = null_mut();
+        let error = unsafe {
+            noise_ik_responder_receive(
+                ik,
+                responder_sk.as_ref(),
+                NonNull::new_unchecked(output.as_mut_ptr()),
+                &mut ik_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+        unsafe { noise_ik_responder_cancel(NonNull::new_unchecked(ik_next)) };
+
+        unsafe { ed25519_delete_secret(initiator) };
+        unsafe { ed25519_delete_secret(responder_sk) };
+        unsafe { ed25519_delete_public(responder_pk) };
+    }
+
+    #[test]
+    fn ik_extract_initiator_pk() {
+        let mut rng = Rng::new(&[]);
+        let mut output = vec![0; 129];
+
+        let initiator = unsafe { ed25519_generate(&mut rng) };
+        let responder_sk = unsafe { ed25519_generate(&mut rng) };
+        let responder_pk = unsafe { ed25519_to_public_key(responder_sk.as_ref()) };
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_next = null_mut();
+        let error = unsafe {
+            noise_ik_initiator_initiate(
+                ik,
+                initiator.as_ref(),
+                responder_pk.as_ref(),
+                NonNull::new_unchecked(output.as_mut_ptr()),
+                &mut ik_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+        unsafe { noise_ik_initiator_cancel(NonNull::new_unchecked(ik_next)) };
+
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_next = null_mut();
+        let error = unsafe {
+            noise_ik_responder_receive(
+                ik,
+                responder_sk.as_ref(),
+                NonNull::new_unchecked(output.as_mut_ptr()),
+                &mut ik_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+
+        let initiator_pk =
+            unsafe { noise_ik_responder_get_initiator_public_key(ik_next.as_ref().unwrap()) };
+        let expected_pk = unsafe { ed25519_to_public_key(initiator.as_ref()) };
+
+        unsafe { noise_ik_responder_cancel(NonNull::new_unchecked(ik_next)) };
+
+        unsafe {
+            assert_eq!(
+                initiator_pk.as_ref().0,
+                expected_pk.as_ref().0,
+                "The public key received in the initiator's message should match the initiator's"
+            );
+        }
+
+        unsafe { ed25519_delete_secret(initiator) };
+        unsafe { ed25519_delete_secret(responder_sk) };
+        unsafe { ed25519_delete_public(responder_pk) };
+        unsafe { ed25519_delete_public(initiator_pk) };
+        unsafe { ed25519_delete_public(expected_pk) };
+    }
+
+    #[test]
+    fn ik_session() {
+        let mut rng = Rng::new(&[]);
+        let mut message_a = vec![0; 129];
+        let mut message_b = vec![0; 129];
+        let mut initiator_session = vec![0; NOISE_SESSION_SIZE];
+        let mut responder_session = vec![0; NOISE_SESSION_SIZE];
+
+        let initiator_sk = unsafe { ed25519_generate(&mut rng) };
+        let initiator_pk = unsafe { ed25519_to_public_key(initiator_sk.as_ref()) };
+        let responder_sk = unsafe { ed25519_generate(&mut rng) };
+        let responder_pk = unsafe { ed25519_to_public_key(responder_sk.as_ref()) };
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_initiator_next = null_mut();
+        let error = unsafe {
+            noise_ik_initiator_initiate(
+                ik,
+                initiator_sk.as_ref(),
+                responder_pk.as_ref(),
+                NonNull::new_unchecked(message_a.as_mut_ptr()),
+                &mut ik_initiator_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+
+        let ik = unsafe { noise_ik(&mut rng, null_mut(), 0) };
+        let mut ik_responder_next = null_mut();
+        let error = unsafe {
+            noise_ik_responder_receive(
+                ik,
+                responder_sk.as_ref(),
+                NonNull::new_unchecked(message_a.as_mut_ptr()),
+                &mut ik_responder_next,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+
+        let mut transport_responder = MaybeUninit::<NoiseTransportState>::zeroed();
+        let error = unsafe {
+            noise_ik_responder_respond(
+                NonNull::new_unchecked(ik_responder_next),
+                NonNull::new_unchecked(message_b.as_mut_ptr()),
+                &mut transport_responder,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+        let transport_responder = unsafe { transport_responder.assume_init() };
+
+        let mut transport_initiator = MaybeUninit::zeroed();
+        let error = unsafe {
+            noise_ik_initiator_receive(
+                NonNull::new_unchecked(ik_initiator_next),
+                initiator_sk.as_ref(),
+                NonNull::new_unchecked(message_b.as_mut_ptr()),
+                &mut transport_initiator,
+            )
+        };
+        if let Some(error) = unsafe { error.as_ref() } {
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
+        }
+        let transport_initiator = unsafe { transport_initiator.assume_init() };
+
+        unsafe {
+            noise_transport_state_session(
+                &transport_initiator,
+                NonNull::new_unchecked(initiator_session.as_mut_ptr()),
+            )
+        };
+        unsafe {
+            noise_transport_state_session(
+                &transport_responder,
+                NonNull::new_unchecked(responder_session.as_mut_ptr()),
+            )
+        };
+
+        unsafe { ed25519_delete_secret(initiator_sk) };
+        unsafe { ed25519_delete_public(initiator_pk) };
+        unsafe { ed25519_delete_secret(responder_sk) };
+        unsafe { ed25519_delete_public(responder_pk) };
+        unsafe { noise_transport_state_delete(transport_initiator) };
+        unsafe { noise_transport_state_delete(transport_responder) };
+
+        assert_eq!(
+            initiator_session, responder_session,
+            "expecting both session to match each other's state"
+        )
+    }
 }

@@ -17,6 +17,9 @@ pub type NoiseNPtr = NonNull<NoiseN>;
 /// i.e. to add as missing bytes of the message: `message.length + NOISE_N_METADATA_SIZE`
 pub const NOISE_N_METADATA_SIZE: usize = 48;
 
+/// expect a 32 bytes psk0 all the time
+pub const NOISE_N_PSK0_SIZE: usize = 32;
+
 /// create a [`NoiseN`] object that can be used on send a message to a sender
 ///
 /// * if `psk0` is not null, it needs to be 32 bytes long
@@ -183,7 +186,7 @@ mod tests {
             )
         };
         if let Some(error) = unsafe { error.as_ref() } {
-            dbg!(error);
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
         }
 
         let n = unsafe { noise_n(&mut rng, null_mut(), null_mut(), 0) };
@@ -197,7 +200,7 @@ mod tests {
             )
         };
         if let Some(error) = unsafe { error.as_ref() } {
-            dbg!(error);
+            eprintln!("{}:{}: {:#?}", std::file!(), std::line!(), error);
         }
 
         unsafe { ed25519_delete_secret(receiver) };
